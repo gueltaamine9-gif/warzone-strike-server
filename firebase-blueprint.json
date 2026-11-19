@@ -1,0 +1,95 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public tactical soldier profile and loadout configuration",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "callsign": { "type": "string", "minLength": 2, "maxLength": 24 },
+        "outfitId": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "helmetId": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "primaryWeapon": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "secondaryWeapon": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "totalKills": { "type": "integer" },
+        "totalDeaths": { "type": "integer" },
+        "matchesPlayed": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "callsign", "outfitId", "helmetId", "primaryWeapon", "secondaryWeapon", "totalKills", "totalDeaths", "matchesPlayed", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Private PII belonging strictly to the signed-in user",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "photoURL": { "type": "string", "maxLength": 512 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "updatedAt"]
+    },
+    "EmailLookup": {
+      "title": "EmailLookup",
+      "description": "Non-listable email-hash to UID lookup record for friend invites",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "callsign": { "type": "string", "minLength": 2, "maxLength": 24 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "callsign", "updatedAt"]
+    },
+    "FriendEntry": {
+      "title": "FriendEntry",
+      "description": "A saved friend entry under a user's friends subcollection",
+      "type": "object",
+      "properties": {
+        "friendUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "callsign": { "type": "string", "minLength": 2, "maxLength": 24 },
+        "addedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["friendUid", "callsign", "addedAt"]
+    },
+    "RoomInvite": {
+      "title": "RoomInvite",
+      "description": "Direct multiplayer room invitation sent between friends",
+      "type": "object",
+      "properties": {
+        "fromUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fromCallsign": { "type": "string", "minLength": 2, "maxLength": 24 },
+        "toUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roomCode": { "type": "string", "minLength": 4, "maxLength": 12, "pattern": "^[A-Z0-9]+$" },
+        "mapId": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "status": { "type": "string", "enum": ["pending", "accepted", "declined"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["fromUid", "fromCallsign", "toUid", "roomCode", "mapId", "status", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Public soldier profiles and tactical loadouts"
+    },
+    "/users/{userId}/private/info": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Private user account PII restricted to owner"
+    },
+    "/users/{userId}/friends/{friendUid}": {
+      "schema": { "$ref": "#/entities/FriendEntry" },
+      "description": "User's saved friends list"
+    },
+    "/directory/{emailKey}": {
+      "schema": { "$ref": "#/entities/EmailLookup" },
+      "description": "Non-listable lookup from sanitized email key to UID"
+    },
+    "/invites/{inviteId}": {
+      "schema": { "$ref": "#/entities/RoomInvite" },
+      "description": "Multiplayer room invitations sent to friends"
+    }
+  }
+}

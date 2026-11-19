@@ -1,0 +1,189 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+        'uid', 'callsign', 'outfitId', 'helmetId',
+        'primaryWeapon', 'secondaryWeapon',
+        'totalKills', 'totalDeaths', 'matchesPlayed', 'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'uid', 'callsign', 'outfitId', 'helmetId',
+        'primaryWeapon', 'secondaryWeapon',
+        'totalKills', 'totalDeaths', 'matchesPlayed', 'updatedAt'
+      ])
+      && data.uid is string && data.uid == userId && isValidId(data.uid)
+      && data.callsign is string && data.callsign.size() >= 2 && data.callsign.size() <= 24
+      && data.outfitId is string && data.outfitId.size() >= 1 && data.outfitId.size() <= 32
+      && data.helmetId is string && data.helmetId.size() >= 1 && data.helmetId.size() <= 32
+      && data.primaryWeapon is string && data.primaryWeapon.size() >= 1 && data.primaryWeapon.size() <= 32
+      && data.secondaryWeapon is string && data.secondaryWeapon.size() >= 1 && data.secondaryWeapon.size() <= 32
+      && data.totalKills is int && data.totalKills >= 0
+      && data.totalDeaths is int && data.totalDeaths >= 0
+      && data.matchesPlayed is int && data.matchesPlayed >= 0
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidPrivateInfo(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'updatedAt'])
+      && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'updatedAt'])
+      && data.uid is string && data.uid == userId && isValidId(data.uid)
+      && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+      && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+      && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512))
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidEmailLookup(data) {
+      return data.keys().hasAll(['uid', 'callsign', 'updatedAt'])
+      && data.keys().hasOnly(['uid', 'callsign', 'updatedAt'])
+      && data.uid is string && isValidId(data.uid)
+      && data.callsign is string && data.callsign.size() >= 2 && data.callsign.size() <= 24
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidFriendEntry(data) {
+      return data.keys().hasAll(['friendUid', 'callsign', 'addedAt'])
+      && data.keys().hasOnly(['friendUid', 'callsign', 'addedAt'])
+      && data.friendUid is string && isValidId(data.friendUid)
+      && data.callsign is string && data.callsign.size() >= 2 && data.callsign.size() <= 24
+      && data.addedAt is timestamp;
+    }
+
+    function isValidRoomInvite(data) {
+      return data.keys().hasAll([
+        'fromUid', 'fromCallsign', 'toUid', 'roomCode', 'mapId', 'status', 'createdAt', 'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'fromUid', 'fromCallsign', 'toUid', 'roomCode', 'mapId', 'status', 'createdAt', 'updatedAt'
+      ])
+      && data.fromUid is string && isValidId(data.fromUid)
+      && data.fromCallsign is string && data.fromCallsign.size() >= 2 && data.fromCallsign.size() <= 24
+      && data.toUid is string && isValidId(data.toUid)
+      && data.roomCode is string && data.roomCode.size() >= 4 && data.roomCode.size() <= 12 && data.roomCode.matches('^[A-Z0-9]+$')
+      && data.mapId is string && data.mapId.size() >= 2 && data.mapId.size() <= 32
+      && data.status is string && data.status in ['pending', 'accepted', 'declined']
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow list: if false;
+      allow create: if isVerified() && isOwner(userId) && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().updatedAt == request.time;
+      allow update: if isVerified() && isOwner(userId) && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'callsign', 'outfitId', 'helmetId', 'primaryWeapon', 'secondaryWeapon',
+          'totalKills', 'totalDeaths', 'matchesPlayed', 'updatedAt'
+        ]);
+      allow delete: if false;
+
+      match /private/info {
+        allow get: if isOwner(userId) && isValidId(userId);
+        allow list: if false;
+        allow create: if isVerified() && isOwner(userId) && isValidId(userId)
+          && isValidPrivateInfo(incoming(), userId)
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow update: if isVerified() && isOwner(userId) && isValidId(userId)
+          && isValidPrivateInfo(incoming(), userId)
+          && incoming().uid == existing().uid
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'email', 'displayName', 'photoURL', 'updatedAt'
+          ]);
+        allow delete: if false;
+      }
+
+      match /friends/{friendUid} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(friendUid);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow create: if isVerified() && isOwner(userId) && isValidId(userId) && isValidId(friendUid)
+          && isValidFriendEntry(incoming())
+          && incoming().friendUid == friendUid
+          && incoming().addedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow update: if false;
+        allow delete: if isVerified() && isOwner(userId) && isValidId(userId) && isValidId(friendUid);
+      }
+    }
+
+    match /directory/{emailKey} {
+      allow get: if isSignedIn() && isValidId(emailKey);
+      allow list: if false;
+      allow create: if isVerified() && isValidId(emailKey)
+        && isValidEmailLookup(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(emailKey)
+        && isValidEmailLookup(incoming())
+        && existing().uid == request.auth.uid
+        && incoming().uid == existing().uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['callsign', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /invites/{inviteId} {
+      allow get: if isSignedIn() && isValidId(inviteId)
+        && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+      allow list: if isSignedIn()
+        && (resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid);
+      allow create: if isVerified() && isValidId(inviteId)
+        && isValidRoomInvite(incoming())
+        && incoming().fromUid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(inviteId)
+        && isValidRoomInvite(incoming())
+        && existing().toUid == request.auth.uid
+        && existing().status == 'pending'
+        && incoming().fromUid == existing().fromUid
+        && incoming().fromCallsign == existing().fromCallsign
+        && incoming().toUid == existing().toUid
+        && incoming().roomCode == existing().roomCode
+        && incoming().mapId == existing().mapId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && incoming().status in ['accepted', 'declined'];
+      allow delete: if isVerified() && isValidId(inviteId)
+        && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+    }
+  }
+}
