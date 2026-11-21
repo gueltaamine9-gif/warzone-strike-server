@@ -298,6 +298,8 @@ export class MatchEngine {
   private airLaunchUntil = 0;
   private yaw = 0;
   private pitch = 0.04;
+  private weaponAimYaw = 0;
+  private weaponAimPitch = 0;
   private sensitivity: number;
   private crouch = false;
   private prone = false;
@@ -404,7 +406,7 @@ export class MatchEngine {
     });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.24;
+    renderer.toneMappingExposure = 1.28;
     const isTouchDevice =
       (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches) ||
       navigator.maxTouchPoints > 0;
@@ -432,11 +434,11 @@ export class MatchEngine {
     this.camera = new THREE.PerspectiveCamera(68, aspect, 0.1, 520);
     _raycaster.camera = this.camera;
 
-    // Bright, Clear 3-Point Tactical Lighting
-    const hemi = new THREE.HemisphereLight(0xa5bedb, 0x3b352d, 0.96);
+    // Bright, Clear & Lightweight 3-Point Tactical Lighting
+    const hemi = new THREE.HemisphereLight(0x8fa8c8, 0x4b4642, 1.32);
     scene.add(hemi);
 
-    const sun = new THREE.DirectionalLight(0xfff2dc, 1.85);
+    const sun = new THREE.DirectionalLight(0xc8d8f0, 1.15);
     sun.position.set(55, 85, 45);
     sun.castShadow = !this.isSoftwareGl && !isTouchDevice;
     sun.shadow.mapSize.set(512, 512);
@@ -451,7 +453,7 @@ export class MatchEngine {
     sun.shadow.normalBias = 0.02;
     scene.add(sun);
 
-    const rim = new THREE.DirectionalLight(0x94a3b8, 0.72);
+    const rim = new THREE.DirectionalLight(0x7aa2c7, 0.95);
     rim.position.set(-50, 35, -60);
     scene.add(rim);
 
@@ -483,7 +485,11 @@ export class MatchEngine {
     scene.add(this.map.group);
 
     // Spawn local player facing arena center
-    const spawn = this.map.spawnPoints[0] || new THREE.Vector3(0, 0, 35);
+    const spawnIndex =
+      this.teamMode === 'teams' && this.localTeam === 'red' && this.map.spawnPoints.length > 1
+        ? Math.floor(this.map.spawnPoints.length / 2)
+        : 0;
+    const spawn = this.map.spawnPoints[spawnIndex] || this.map.spawnPoints[0] || new THREE.Vector3(0, 0, 35);
     this.pos.copy(spawn);
     this.pos.y = this.map.getTerrainHeight(this.pos.x, this.pos.z);
     this.yaw = Math.atan2(-this.pos.x, -this.pos.z);
@@ -495,7 +501,6 @@ export class MatchEngine {
       this.weapons[0],
       maxAniso,
     );
-    this.localRig.setTeamMarker(this.teamMode === 'teams' ? this.localTeam : 'free');
     this.localRig.root.position.copy(this.pos);
     this.localRig.root.rotation.y = this.yaw;
     scene.add(this.localRig.root);
@@ -540,6 +545,33 @@ export class MatchEngine {
 
     this.bindEvents();
     this.tick();
+  }
+
+  private respawnLocalPlayerAt(x: number, y: number, z: number, hp = 100) {
+    const groundY = this.map.getTerrainHeight(x, z);
+    this.pos.set(x, Math.max(y, groundY), z);
+    this.hp = hp;
+    this.armor = 60;
+    this.burnUntil = 0;
+    this.nextBurnTickAt = 0;
+    this.alive = true;
+    this.respawnAt = 0;
+    this.prone = false;
+    this.crouch = false;
+    this.ridingCarpet = false;
+    this.parachuting = false;
+    this.activeVehicleId = null;
+    this.activeVehicleSeat = null;
+    this.velX = 0;
+    this.velY = 0;
+    this.velZ = 0;
+    this.airLaunchUntil = 0;
+    this.grenadeCounts.frag = Math.max(2, this.grenadeCounts.frag);
+    this.grenadeCounts.smoke = Math.max(1, this.grenadeCounts.smoke);
+    this.grenadeCounts.molotov = Math.max(1, this.grenadeCounts.molotov);
+    this.localRig.root.visible = true;
+    this.localRig.root.position.copy(this.pos);
+    this.lastHudEmit = 0;
   }
 
   private spawnBots(count: number, maxAniso: number) {
@@ -650,7 +682,6 @@ export class MatchEngine {
       },
     );
     rig.setHealthBar(init.hp ?? 100, init.name, isAlly, rTeam);
-    rig.setTeamMarker(this.teamMode === 'teams' ? rTeam : 'free');
     rig.root.position.set(init.x, init.y, init.z);
     this.scene.add(rig.root);
 
@@ -707,7 +738,6 @@ export class MatchEngine {
     if (teamMode) this.teamMode = teamMode;
     const selfPlayer = players.find((p) => p.id === this.opts.localPlayerId);
     if (selfPlayer) this.localTeam = selfPlayer.team;
-    this.localRig.setTeamMarker(this.teamMode === 'teams' ? this.localTeam : 'free');
 
     for (const p of players) {
       if (p.id === this.opts.localPlayerId) continue;
@@ -721,7 +751,6 @@ export class MatchEngine {
         r.rig.setLoadout(r.outfitId, r.helmetId, r.weaponId);
       }
       r.rig.setHealthBar(r.hp, r.name, this.isFriendlyTeam(r.team), r.team);
-      r.rig.setTeamMarker(this.teamMode === 'teams' ? r.team : 'free');
 
       const nextGlbId = p.customGlbId ?? null;
       const nextFlip = Boolean(p.customGlbFlip);
@@ -776,7 +805,6 @@ export class MatchEngine {
     r.alive = pkt.alive;
     r.rig.root.visible = pkt.alive;
     r.rig.setHealthBar(pkt.hp, r.name, this.isFriendlyTeam(r.team), r.team);
-    r.rig.setTeamMarker(this.teamMode === 'teams' ? r.team : 'free');
     if (pkt.weaponId && pkt.weaponId !== r.weaponId) {
       r.weaponId = pkt.weaponId as WeaponId;
       r.rig.setLoadout(r.outfitId, r.helmetId, r.weaponId);
@@ -864,6 +892,7 @@ export class MatchEngine {
       this.exitActiveVehicle();
       this.dismountCarpet();
       this.parachuting = false;
+      this.lastHudEmit = 0;
     } else {
       const r = this.remotes.get(victimId);
       if (r) {
@@ -896,37 +925,25 @@ export class MatchEngine {
 
   public applyNetworkRespawn(id: string, x: number, y: number, z: number, hp: number) {
     if (id === this.opts.localPlayerId) {
-      this.pos.set(x, y, z);
-      this.hp = hp;
-      this.burnUntil = 0;
-      this.alive = true;
-      this.prone = false;
-      this.crouch = false;
-      this.ridingCarpet = false;
-      this.parachuting = false;
-      this.activeVehicleId = null;
-      this.activeVehicleSeat = null;
-      this.velX = 0;
-      this.velY = 0;
-      this.velZ = 0;
-      this.airLaunchUntil = 0;
-      this.localRig.root.visible = true;
+      this.respawnLocalPlayerAt(x, y, z, hp);
     } else {
       const r = this.remotes.get(id);
       if (r) {
+        const groundY = this.map.getTerrainHeight(x, z);
+        const safeY = Math.max(y, groundY);
         r.x = x;
-        r.y = y;
+        r.y = safeY;
         r.z = z;
         r.targetX = x;
-        r.targetY = y;
+        r.targetY = safeY;
         r.targetZ = z;
         r.hp = hp;
         r.alive = true;
         r.vehicleId = null;
         r.vehicleSeat = null;
         r.rig.root.visible = true;
+        r.rig.root.position.set(x, safeY, z);
         r.rig.setHealthBar(hp, r.name, this.isFriendlyTeam(r.team), r.team);
-        r.rig.setTeamMarker(this.teamMode === 'teams' ? r.team : 'free');
       }
     }
   }
@@ -1152,6 +1169,11 @@ export class MatchEngine {
   }
 
   public toggleScope() {
+    const spec = getWeaponSpec(this.weapons[this.activeSlot]);
+    if (!spec.hasOpticalScope) {
+      this.scoped = false;
+      return;
+    }
     this.scoped = !this.scoped;
     soundEngine.playUiClick();
   }
@@ -1604,6 +1626,7 @@ export class MatchEngine {
       this.exitActiveVehicle();
       this.dismountCarpet();
       this.parachuting = false;
+      this.lastHudEmit = 0;
     }
   }
 
@@ -2118,12 +2141,19 @@ export class MatchEngine {
       const spreadFactor = this.scoped
         ? spec.hasOpticalScope
           ? spec.spread * 0.15
-          : spec.spread * 0.42
+          : spec.spread * 0.28
         : spec.spread;
 
       for (let p = 0; p < pellets; p++) {
         _rayOrigin.copy(this.camera.position);
         this.camera.getWorldDirection(_rayDir);
+        if (Math.abs(this.weaponAimYaw) > 0.0001 || Math.abs(this.weaponAimPitch) > 0.0001) {
+          _rayDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), -this.weaponAimYaw);
+          const rightAxis = new THREE.Vector3().crossVectors(_rayDir, new THREE.Vector3(0, 1, 0)).normalize();
+          if (rightAxis.lengthSq() > 0.0001) {
+            _rayDir.applyAxisAngle(rightAxis, this.weaponAimPitch);
+          }
+        }
         _rayDir.x += (Math.random() - 0.5) * spreadFactor;
         _rayDir.y += (Math.random() - 0.5) * spreadFactor;
         _rayDir.z += (Math.random() - 0.5) * spreadFactor;
@@ -2804,28 +2834,11 @@ export class MatchEngine {
       this.ammo[this.activeSlot] = getWeaponSpec(this.weapons[this.activeSlot]).magSize;
     }
 
-    if (!this.alive && !this.opts.isOnline && now >= this.respawnAt) {
-      const sp = this.map.spawnPoints[Math.floor(Math.random() * this.map.spawnPoints.length)];
-      this.pos.copy(sp);
-      this.pos.y = this.map.getTerrainHeight(this.pos.x, this.pos.z);
-      this.hp = 100;
-      this.armor = 60;
-      this.burnUntil = 0;
-      this.grenadeCounts.frag = Math.max(2, this.grenadeCounts.frag);
-      this.grenadeCounts.smoke = Math.max(1, this.grenadeCounts.smoke);
-      this.grenadeCounts.molotov = Math.max(1, this.grenadeCounts.molotov);
-      this.alive = true;
-      this.prone = false;
-      this.crouch = false;
-      this.ridingCarpet = false;
-      this.parachuting = false;
-      this.activeVehicleId = null;
-      this.activeVehicleSeat = null;
-      this.velX = 0;
-      this.velY = 0;
-      this.velZ = 0;
-      this.airLaunchUntil = 0;
-      this.localRig.root.visible = true;
+    if (!this.alive && this.respawnAt > 0 && now >= this.respawnAt) {
+      if (!this.opts.isOnline || now >= this.respawnAt + 1200) {
+        const sp = this.map.spawnPoints[Math.floor(Math.random() * this.map.spawnPoints.length)];
+        this.respawnLocalPlayerAt(sp.x, sp.y, sp.z, 100);
+      }
     }
 
     if (this.emote !== 'none' && now > this.emoteUntil) {
@@ -2962,12 +2975,27 @@ export class MatchEngine {
       }
     }
 
-    // Local Movement Input (WASD + Virtual Analog Joystick — Smooth PUBG-style Sprint/Walk/Strafe, Vehicles, Carpet & Parachute)
+    // Local Movement Input (WASD + Virtual Analog Joystick — PUBG-fast zig-zag, Vehicles, Carpet & Parachute)
     let moveFwd = (this.keys['KeyW'] || this.keys['ArrowUp'] ? 1 : 0) - (this.keys['KeyS'] || this.keys['ArrowDown'] ? 1 : 0);
     let moveRight = (this.keys['KeyD'] || this.keys['ArrowRight'] ? 1 : 0) - (this.keys['KeyA'] || this.keys['ArrowLeft'] ? 1 : 0);
 
     moveFwd -= this.joyVec.y;
     moveRight += this.joyVec.x;
+
+    const activeVehicle = this.activeVehicleId
+      ? this.map.vehicles.find((item) => item.id === this.activeVehicleId) || null
+      : null;
+    const canAimWeaponWithJoy = this.alive && !activeVehicle && !this.ridingCarpet && !this.parachuting && !this.aimingGrenade;
+    if (canAimWeaponWithJoy) {
+      const targetAimYaw = -this.joyVec.x * 0.45;
+      const targetAimPitch = -this.joyVec.y * 0.45;
+      const aimBlend = Math.min(1, 14 * dt);
+      this.weaponAimYaw += (targetAimYaw - this.weaponAimYaw) * aimBlend;
+      this.weaponAimPitch += (targetAimPitch - this.weaponAimPitch) * aimBlend;
+    } else {
+      this.weaponAimYaw *= Math.max(0, 1 - 16 * dt);
+      this.weaponAimPitch *= Math.max(0, 1 - 16 * dt);
+    }
 
     const fwdX = Math.sin(this.yaw);
     const fwdZ = Math.cos(this.yaw);
@@ -2978,9 +3006,6 @@ export class MatchEngine {
     let moveSpeed = 0;
     let moveForwardSpeed = 0;
     let moveStrafeSpeed = 0;
-    const activeVehicle = this.activeVehicleId
-      ? this.map.vehicles.find((item) => item.id === this.activeVehicleId) || null
-      : null;
 
     if (activeVehicle && this.alive) {
       // Driving Seat (0): steer smoothly along vehicle heading & lock chase camera behind vehicle!
@@ -3303,7 +3328,7 @@ export class MatchEngine {
       prone: this.prone,
       grounded: this.grounded,
       peek: this.peek,
-      aimPitch: this.pitch,
+      aimPitch: THREE.MathUtils.clamp(this.pitch + this.weaponAimPitch, -0.78, 0.88),
       emote: this.emote,
       recoil: this.recoilAmount,
       throwingGrenade: this.aimingGrenade,
@@ -3648,7 +3673,10 @@ export class MatchEngine {
       this.camera.rotateZ(-this.peekCamOffset * 0.12);
     }
 
-    const targetFov = this.scoped && this.alive ? activeWeaponSpec.scopeZoom : 68;
+    if (!activeWeaponSpec.hasOpticalScope && this.scoped) {
+      this.scoped = false;
+    }
+    const targetFov = isSniperScope ? activeWeaponSpec.scopeZoom : 68;
     if (Math.abs(this.camFov - targetFov) > 0.1) {
       this.camFov = THREE.MathUtils.damp(this.camFov, targetFov, 16, dt);
       this.camera.fov = this.camFov;
@@ -3766,6 +3794,13 @@ export class MatchEngine {
         _raycaster.camera = this.camera;
         _rayOrigin.copy(this.camera.position);
         this.camera.getWorldDirection(_rayDir);
+        if (Math.abs(this.weaponAimYaw) > 0.0001 || Math.abs(this.weaponAimPitch) > 0.0001) {
+          _rayDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), -this.weaponAimYaw);
+          const rightAxis = new THREE.Vector3().crossVectors(_rayDir, new THREE.Vector3(0, 1, 0)).normalize();
+          if (rightAxis.lengthSq() > 0.0001) {
+            _rayDir.applyAxisAngle(rightAxis, this.weaponAimPitch);
+          }
+        }
         _raycaster.set(_rayOrigin, _rayDir);
         _raycaster.far = activeWeaponSpec.range;
         const enemyMeshes: THREE.Object3D[] = [];
@@ -3792,7 +3827,7 @@ export class MatchEngine {
         reloading: this.reloadingUntil > now,
         activeSlot: this.activeSlot,
         weapons: [this.weapons[0], this.weapons[1]],
-        scoped: this.scoped && this.alive,
+        scoped: isSniperScope,
         crouch: this.crouch,
         prone: this.prone,
         ridingCarpet: this.ridingCarpet,
@@ -3803,7 +3838,7 @@ export class MatchEngine {
         teamMode: this.teamMode,
         peek: this.peek,
         alive: this.alive,
-        respawnSec: this.alive ? 0 : Math.max(1, Math.ceil((this.respawnAt - now) / 1000)),
+        respawnSec: this.alive || this.respawnAt <= 0 ? 0 : Math.max(0, Math.ceil((this.respawnAt - now) / 1000)),
         timeRemainingSec,
         kills: this.kills,
         deaths: this.deaths,
