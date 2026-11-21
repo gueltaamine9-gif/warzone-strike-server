@@ -122,7 +122,14 @@ function generateId(prefix = 'p'): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function getSpawnPoint(index: number): { x: number; y: number; z: number } {
+function getSpawnPoint(index: number, team: TeamId = 'free'): { x: number; y: number; z: number } {
+  if (team === 'green' || team === 'red') {
+    const spread = ((index % 6) - 2.5) * 6;
+    const depth = 44 + (index % 3) * 7;
+    return team === 'green'
+      ? { x: spread, y: 0, z: -depth }
+      : { x: -spread, y: 0, z: depth };
+  }
   const angle = (index * 2.39996) % (Math.PI * 2);
   const radius = 26 + (index % 4) * 14;
   return {
@@ -383,9 +390,10 @@ async function startServer() {
         const code = generateRoomCode();
         const playerId = generateId('p');
         const profile = (msg.profile as Record<string, unknown>) || {};
-        const spawn = getSpawnPoint(0);
-
         const teamMode: TeamMode = msg.teamMode === 'teams' ? 'teams' : 'free';
+        const initialTeam: TeamId = teamMode === 'teams' ? 'green' : 'free';
+        const spawn = getSpawnPoint(0, initialTeam);
+
         const player: ServerPlayer = {
           id: playerId,
           uid: profile.uid ? String(profile.uid) : undefined,
@@ -396,7 +404,7 @@ async function startServer() {
           secondaryWeapon: String(profile.secondaryWeapon || 'awm'),
           customGlbId: profile.customGlbId ? sanitizeGlbId(String(profile.customGlbId)) : null,
           customGlbFlip: Boolean(profile.customGlbFlip),
-          team: teamMode === 'teams' ? 'green' : 'free',
+          team: initialTeam,
           isHost: true,
           ready: true,
           ws,
@@ -463,7 +471,8 @@ async function startServer() {
         removeClientFromRoom(ws);
         const playerId = generateId('p');
         const profile = (msg.profile as Record<string, unknown>) || {};
-        const spawn = getSpawnPoint(room.players.size);
+        const assignedTeam = assignBalancedTeam(room);
+        const spawn = getSpawnPoint(room.players.size, assignedTeam);
 
         const player: ServerPlayer = {
           id: playerId,
@@ -475,7 +484,7 @@ async function startServer() {
           secondaryWeapon: String(profile.secondaryWeapon || 'awm'),
           customGlbId: profile.customGlbId ? sanitizeGlbId(String(profile.customGlbId)) : null,
           customGlbFlip: Boolean(profile.customGlbFlip),
-          team: assignBalancedTeam(room),
+          team: assignedTeam,
           isHost: false,
           ready: true,
           ws,
@@ -617,7 +626,7 @@ async function startServer() {
 
         let idx = 0;
         for (const p of room.players.values()) {
-          const spawn = getSpawnPoint(idx++);
+          const spawn = getSpawnPoint(idx++, p.team);
           p.x = spawn.x;
           p.y = spawn.y;
           p.z = spawn.z;
@@ -796,17 +805,22 @@ async function startServer() {
             })),
           });
 
+          const respawnDelayMs = 2500;
+          victim.respawnAt = Date.now() + respawnDelayMs;
+          const victimIndex = Array.from(room.players.values()).findIndex((p) => p.id === targetId);
           setTimeout(() => {
-            if (room.status !== 'playing') return;
-            const v = room.players.get(targetId);
+            const currentRoom = rooms.get(link.roomCode);
+            if (!currentRoom || currentRoom.status !== 'playing') return;
+            const v = currentRoom.players.get(targetId);
             if (!v) return;
-            const spawn = getSpawnPoint(Math.floor(Math.random() * 12));
+            const spawn = getSpawnPoint(victimIndex >= 0 ? victimIndex : Math.floor(Math.random() * 12), v.team);
             v.hp = 100;
             v.alive = true;
+            v.respawnAt = 0;
             v.x = spawn.x;
             v.y = spawn.y;
             v.z = spawn.z;
-            broadcastRoom(room, {
+            broadcastRoom(currentRoom, {
               type: 'player_respawned',
               id: v.id,
               x: v.x,
@@ -814,7 +828,7 @@ async function startServer() {
               z: v.z,
               hp: v.hp,
             });
-          }, 3000);
+          }, respawnDelayMs);
         } else {
           sendJson(victim.ws, {
             type: 'took_damage',
@@ -846,7 +860,7 @@ async function startServer() {
     });
   }
 
-  const PORT = Number(process.env.PORT || 3000);
+  const PORT = Number(process.env.PORT) || 3000;
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Warzone Strike 3D server running on http://0.0.0.0:${PORT}`);
   });
